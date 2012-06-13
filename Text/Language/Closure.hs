@@ -1,9 +1,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE ExistentialQuantification #-}
-{-# LANGUAGE Rank2Types #-}
-{-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE OverlappingInstances #-}
 module Text.Language.Closure( (.:)
                             , Clos
