@@ -1,8 +1,16 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE ExistentialQuantification #-}
+-- {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverlappingInstances #-}
-module Text.Language.Closure( (.:)
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE UndecidableInstances #-}
+module Text.Language.Closure{-  
+                            ( 
+                              (.:)
                             , Clos
                             , declare
                             , record
@@ -11,18 +19,17 @@ module Text.Language.Closure( (.:)
                             , ClosureDescription
                             , ClosureDescriptable( .. )
                             , renderClosureEnvironment
-                            ) where
+                            ) -}where
 
-import Control.Applicative( (<$>), pure )
+import Control.Applicative( (<$>), (<*>), pure )
 import Control.Monad.State( State, get, put, execState )
 import qualified Data.Set as S
 import Data.Monoid( Monoid, mappend, mconcat )
 import Data.List ( intersperse )
-import Data.Word ( Word, Word8, Word16, Word32, Word64 )
+import qualified Data.Text as T
 import Text.Printf( printf )
 {-import Data.Map  ( Map() )-}
-{-import qualified Data.Text as T-}
-{-import Data.Aeson( ToJSON(..), Value, (.=), object )-}
+import Data.Aeson( ToJSON(..), Value, (.=), object )
 
 --------------------------------------------------
 ----            Typing environment
@@ -43,7 +50,7 @@ type Clos a = State ClosureEnvironment a
 isTypeRendered :: String -> Clos Bool
 isTypeRendered name = S.member name . definitions <$> get
 
-declare :: (ClosureDescriptable a) => a -> Clos ()
+declare :: (ClosureDescriptable a kind) => a -> Clos ()
 declare element = do
     rendered <- renderDeclaration element
     ctxt <- get
@@ -52,173 +59,272 @@ declare element = do
         declarationList = declarationList ctxt ++ [rendered]
     }
 
-renderDeclaration :: (ClosureDescriptable a) => a -> Clos String
+renderDeclaration :: (ClosureDescriptable a kind) => a -> Clos String
 renderDeclaration el = do
     t <- renderType el
     let name = typename el
     case toClosureDesc el of
-      (Enum _ _ _) ->
-            return $ printf "/* @enum {%s} */\n var %s;\n\n" t name
-      _ -> return $  printf "/* @typedef (%s) */\nvar %s;\n\n" t name
+      (ClosureEnum _ _ _ _) ->
+            return $ printf "/** @enum {%s} */\nvar %s;\n\n" t name
+      _ -> return $  printf "/** @typedef (%s) */\nvar %s;\n\n" t name
 
 renderClosureEnvironment :: Clos () -> String
 renderClosureEnvironment declarations =
     concat . declarationList $ execState declarations emptyEnvironment
 
-renderType :: (ClosureDescriptable a) => a -> Clos String
+--------------------------------------------------
+----          Main  Typeclass
+--------------------------------------------------
+
+class ClosureDescriptable a kind | a -> kind where
+    -- | Name of the type, used to locate it.
+    typename :: a -> String
+
+    toClosureDesc :: a -> ClosureDescription a kind
+
+    toValue :: a -> Value
+
+--------------------------------------------------
+----            Types
+--------------------------------------------------
+data Accessor a kind where
+     Accessor :: (ClosureDescriptable b kind) => String -> (a -> b) -> Accessor a kind
+
+data EnumContent a kind where
+     EnumContent :: (ClosureDescriptable b kind) => (a -> b)
+                 -> EnumContent a kind
+
+-- | Token for values which can be serialized
+data Serializable
+
+-- | Toekn for the rest of values
+data Typeable
+
+data ClosureDescList elem kind where
+    Nil     :: ClosureDescList elem a
+
+    Cons    :: elem k -> ClosureDescList elem a
+            -> ClosureDescList elem Typeable
+
+    ConsSer :: elem Serializable -> ClosureDescList elem Serializable
+            -> ClosureDescList elem Serializable
+
+class DescImportable a kind where
+    toKind :: [a kind] -> ClosureDescList a kind
+
+instance DescImportable a Typeable where
+    toKind [] = Nil
+    toKind (x:xs) = Cons x $ toKind xs
+
+instance DescImportable a Serializable where
+    toKind [] = Nil
+    toKind (x:xs) = ConsSer x $ toKind xs
+
+mapList :: (forall subKind. a subKind -> b) -> ClosureDescList a kind -> [b]
+mapList _ Nil = []
+mapList f (Cons x xs) = f x : mapList f xs
+mapList f (ConsSer x xs) = f x : mapList f xs
+
+mapSerialazable :: (a Serializable -> b) -> ClosureDescList a Serializable
+                -> [b]
+mapSerialazable _ Nil = []
+mapSerialazable f (ConsSer x xs) = f x : mapSerialazable f xs
+
+data ClosureDescription a kind where
+   ClosureEnum      :: String -> [a] -> (a -> String) -> EnumContent a Serializable
+                    -> ClosureDescription a Serializable
+
+   ClosureRecord    :: String -> ClosureDescList (Accessor a) k
+                    -> ClosureDescription a k
+
+   ClosureType      :: String -> ClosureDescription a Typeable
+
+   ClosureVal       :: String -> ClosureDescription a Serializable
+
+   ClosureArray     :: String
+                    -> ClosureDescription el kind
+                    -> ClosureDescription a kind
+
+   ClosureFunction  :: String
+                    -> ClosureDescription el1 kind1
+                    -> ClosureDescription el2 kind2
+                    -> ClosureDescription a Typeable
+
+   ClosureNil       :: ClosureDescription a Typeable
+
+   ClosureTuple     :: ClosureDescription b kind1
+                    -> ClosureDescription c kind2
+                    -> ClosureDescription a Typeable
+
+   ClosureTupleSub  :: ClosureDescription b kind1
+                    -> ClosureDescription c kind2
+                    -> ClosureDescription a Typeable
+
+descriptionName :: ClosureDescription a k -> String
+descriptionName (ClosureEnum  n _ _ _) = n
+descriptionName (ClosureRecord n _) = n
+descriptionName (ClosureType n) = n
+descriptionName (ClosureVal n) = n
+descriptionName (ClosureArray n _) = n
+descriptionName (ClosureFunction n _ _) = n
+descriptionName ClosureNil = ""
+descriptionName (ClosureTuple _ _) = ""
+descriptionName (ClosureTupleSub _ _) = ""
+
+renderType :: (ClosureDescriptable a kind) => a -> Clos String
 renderType element = do
   alreadyRendered <- isTypeRendered $ typename element
   if alreadyRendered
     then pure $ typename element
     else aux $ toClosureDesc element
 
-   where aux (ClosureType s) = pure $ s
-         aux (ClosureTuple s) = concat
-                              . intersperse ", " 
-                             <$> sequence [renderType t | ClosureTypeable t <- s]
+   where renderSub :: ClosureDescription e k -> Clos String
+         renderSub def = do
+            let name = descriptionName def
+            alreadyRendered <- isTypeRendered name
+            if alreadyRendered
+                then pure name
+                else aux def
 
-         aux (ClosureFunction (ClosureTypeable arg) (ClosureTypeable rez)) = do
-             rArg <- renderType arg
-             rRez <- renderType rez
-             if null rRez
-                then pure $ printf "function (%s)" rArg
-                else pure $ printf "function (%s) : %s" rArg rRez
 
-         aux (ClosureArray (ClosureTypeable a)) =do
-             sub <- renderType a
-             pure $ surround "Array.<" ">" sub
+         aux :: forall a kind . ClosureDescription a kind -> Clos String
+         aux ClosureNil      = pure ""
+         aux (ClosureType s) = pure s
+         aux (ClosureVal s) = pure s
+         aux (ClosureTuple l r) = sepIt <$> renderSub l <*> renderSub r
+            where sepIt a "" = a
+                  sepIt a b  = "(" ++ a ++ ", " ++ b ++ ")"
 
-         aux (Enum _lst _f (EnumContent renderer)) = renderType (renderer undefined)
+         aux (ClosureTupleSub l r) = sepIt <$> renderSub l <*> renderSub r
+            where sepIt a "" = a
+                  sepIt a b  = a ++ ", " ++ b
 
-         aux (ClosureRecord lst) = do
-             let subber (s, Renderable f) =
-                        ((s ++ ": ") ++) <$> renderType (f undefined)
-             surround "{ " " }" . commaSep <$> mapM subber lst
+         aux (ClosureFunction _ args rez) = 
+            printf "function (%s) : %s" <$> renderSub args <*> renderSub rez
 
---------------------------------------------------
-----            Types
---------------------------------------------------
-data RecordAccessor a = forall b. (ClosureDescriptable b) => Renderable (a -> b)
+         aux (ClosureArray _ t) =
+             surround "Array.<" ">" <$> renderSub t
 
-data EnumContent a =
-    forall b. (ClosureDescriptable b) => EnumContent (a -> b)
+         aux (ClosureEnum name _lst _f (EnumContent renderer)) =
+             renderType (renderer undefined)
 
-data ClosureTypeable = forall b. ClosureDescriptable b => ClosureTypeable b
+         aux (ClosureRecord _ lst) =
+             surround "{ " " }" . commaSep <$> sequence (mapList subber lst)
+                where subber :: (Accessor a aKind) -> Clos String
+                      subber (Accessor s f) = printf "%s: %s" s
+                                           <$> renderSub t
+                        where e = f (undefined :: a)
+                              t = toClosureDesc e
 
-data ClosureDescription a =
-          Enum [a] (a -> String) (EnumContent a)
-        | ClosureRecord [(String, RecordAccessor a)]
-        | ClosureType String
-        | ClosureArray ClosureTypeable
-        | ClosureFunction ClosureTypeable ClosureTypeable
-        | ClosureTuple [ClosureTypeable]
-
---------------------------------------------------
-----          Main  Typeclass
---------------------------------------------------
-
--- | Minimal complete definition : `typename`
-class ClosureDescriptable a where
-    -- | Name of the type, used to locate it.
-    typename :: a -> String
-
-    -- | Return the signature used to represent it
-    -- Default implementation : typename
-    toClosureDesc :: a -> ClosureDescription a
-    toClosureDesc a = ClosureType $ typename a
 
 --------------------------------------------------
 ----            User chrome
 --------------------------------------------------
-(.:) :: (ClosureDescriptable b) => String -> (a -> b) -> (String, RecordAccessor a)
-(.:) a f = (a, Renderable f)
+    --
+record :: forall a kind.
+          (ClosureDescriptable a kind,
+           DescImportable (Accessor a) kind) => [Accessor a kind]
+       -> ClosureDescription a kind
+record = ClosureRecord name . toKind
+    where name = typename (undefined :: a)
 
-record :: [(String, RecordAccessor a)] -> ClosureDescription a
-record = ClosureRecord
+(.:) :: (ClosureDescriptable b kind) => String -> (a -> b)
+     -> Accessor a kind
+(.:) = Accessor
 
-enum :: (ClosureDescriptable b) => [a] -> (a -> String) -> (a -> b) -> ClosureDescription  a
-enum l f = Enum l f . EnumContent 
-
-deriveEnum :: (Show a, Enum a) => a -> ClosureDescription a
-deriveEnum _ = Enum elemList show (EnumContent (show . fromEnum))
-    where elemList = [toEnum 0 ..]
+commaSep :: [String] -> String
+commaSep = mconcat . intersperse ",\n                "
 
 surround :: (Monoid a) => a -> a -> a -> a
 surround prev after v = prev `mappend` v `mappend` after
 
-commaSep :: [String] -> String
-commaSep = mconcat . intersperse ", "
+--------------------------------------------------
+----            Here lie Serialization magic
+--------------------------------------------------
+instance (ClosureDescriptable a Serializable) => ToJSON a where
+    toJSON a = serialize (toClosureDesc a) a
+
+defaultSerializer :: (ClosureDescriptable a Serializable) => a -> Value
+defaultSerializer v = serialize (toClosureDesc v) v
+
+serialize :: (ClosureDescriptable a Serializable)
+          => ClosureDescription a Serializable -> a -> Value
+serialize (ClosureVal _) v = toValue v
+serialize (ClosureEnum _ _ renderer _) v = toJSON $ renderer v
+serialize (ClosureArray _ _)  arr = toValue arr
+serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
+    where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
+
+enum :: (ClosureDescriptable a k,
+         ClosureDescriptable b Serializable)
+     => [a] -> (a -> String) -> (a -> b) -> ClosureDescription a Serializable
+enum l f = ClosureEnum name l f . EnumContent 
+    where name = typename (head l)
+
+deriveEnum :: (Show a, Enum a, ClosureDescriptable a k)
+           => a -> ClosureDescription a Serializable
+deriveEnum v = ClosureEnum name elemList show (EnumContent (show . fromEnum))
+    where elemList = [toEnum 0 ..]
+          name = typename v
 
 --------------------------------------------------
 ----         Initial type instances
 --------------------------------------------------
-instance ClosureDescriptable Int where
-    typename _ = "number"
+instance ClosureDescriptable Int Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
 
-instance ClosureDescriptable Bool where
+instance ClosureDescriptable Bool Serializable where
     typename _ = "boolean"
+    toClosureDesc _ = ClosureVal "boolean"
+    toValue = toJSON
 
-instance ClosureDescriptable Float where
-    typename _ = "number"
+instance ClosureDescriptable Char Serializable where
+    typename  _ = "string"
+    toClosureDesc _ = ClosureVal "string"
+    toValue = toJSON
 
-instance ClosureDescriptable Double where
-    typename _ = "number"
+instance ClosureDescriptable String Serializable where
+    typename  _ = "string"
+    toClosureDesc _ = ClosureVal "string"
+    toValue = toJSON
 
-instance ClosureDescriptable Word where
-    typename _ = "number"
-
-instance ClosureDescriptable Word8 where
-    typename _ = "number"
-
-instance ClosureDescriptable Word16 where
-    typename _ = "number"
-
-instance ClosureDescriptable Word32 where
-    typename _ = "number"
-
-instance ClosureDescriptable Word64 where
-    typename _ = "number"
-
-instance ClosureDescriptable Char where
-    typename _ = "char"
-
-instance ClosureDescriptable String where
-    typename _ = "string"
-
-instance (ClosureDescriptable a) => ClosureDescriptable [a] where
+instance (ClosureDescriptable a kind,
+          ToJSON a) => ClosureDescriptable [a] kind where
     typename _ = "Array"
-    toClosureDesc _ = ClosureArray $ ClosureTypeable (undefined :: a)
+    toValue = toJSON
+    toClosureDesc _ = ClosureArray ""
+                    $ toClosureDesc (undefined :: a)
 
-instance ( ClosureDescriptable a
-         , ClosureDescriptable b ) =>
-         ClosureDescriptable (a,b) where
+instance ( ClosureDescriptable a k1
+         , ClosureDescriptable b k2 ) =>
+         ClosureDescriptable (a,b) Typeable where
     typename _ = "tuple"
+    toValue = error "Error tuples cannot be serialized"
+    toClosureDesc tu = ClosureTuple d1 d2
+        where d1 = toClosureDesc $ fst tu
+              d2 = toClosureDesc $ snd tu
 
+instance ( ClosureDescriptable a k1
+         , ClosureDescriptable b k2
+         , ClosureDescriptable c k3) =>
+         ClosureDescriptable (a, b, c) Typeable where
+    typename _ = "tuple"
+    toValue = error "Error tuples cannot be serialized"
     -- Don't pattern match, argument can be undefined
     toClosureDesc tu =
-        ClosureTuple [ClosureTypeable $ fst tu, ClosureTypeable $ snd tu]
+        ClosureTuple (n1 tu) $ ClosureTupleSub (n2 tu) (n3 tu)
+            where n1 ~(a, _, _) = toClosureDesc a
+                  n2 ~(_, a, _) = toClosureDesc a
+                  n3 ~(_, _, a) = toClosureDesc a
 
-instance ( ClosureDescriptable a
-         , ClosureDescriptable b
-         , ClosureDescriptable c ) =>
-         ClosureDescriptable (a,b,c) where
-    typename _ = "tuple"
-
-    -- Don't pattern match, argument can be undefined
-    toClosureDesc tu =
-        ClosureTuple [ ClosureTypeable $ n1 tu
-                     , ClosureTypeable $ n2 tu
-                     , ClosureTypeable $ n3 tu
-                     ]
-            where n1 (a, _, _) = a
-                  n2 (_, a, _) = a
-                  n3 (_, _, a) = a
-
-instance ( ClosureDescriptable a
-         , ClosureDescriptable b) =>
-         ClosureDescriptable ((->) a b) where
+instance ( ClosureDescriptable a k1
+         , ClosureDescriptable b k2) =>
+         ClosureDescriptable ((->) a b) Typeable where
     typename _ = "function"
-    toClosureDesc f = ClosureFunction (ClosureTypeable a) (ClosureTypeable b)
+    toValue = error "Error functions cannot be serialized"
+    toClosureDesc f = ClosureFunction "" (toClosureDesc a) (toClosureDesc b)
         where a = undefined :: a
               b = f a :: b
 
@@ -226,4 +332,5 @@ instance ( ClosureDescriptable a
     {-typename _ = "Object"-}
     {-toClosureDesc _ = "Object.<string, " ++ sub ++ ">"-}
         {-where sub = toClosureDesc (undefined :: a)-}
+
 
