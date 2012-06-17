@@ -3,6 +3,7 @@
 import Text.Language.Closure
 
 import Data.Text.Encoding as E
+import qualified Data.Map as M
 import qualified Data.Text as T
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
@@ -15,6 +16,7 @@ data TRecord = TRecord
     , axx :: [String]
     , bidule :: [[Bool]]
     , crap :: [DiffCrap]
+    , mapping :: M.Map String Int
     }
 
 defaultTRecord :: TRecord
@@ -25,6 +27,7 @@ defaultTRecord = TRecord
     , axx = ["list", "of", "char"]
     , bidule = [[False,True], [True, False], [False] ]
     , crap = [DiffMouelshe, DiffPlouch]
+    , mapping = M.fromList [("yeah", 16), ("ouki", 19)]
     }
 
 defaultTFunctions :: TFunctions
@@ -33,6 +36,7 @@ defaultTFunctions = TFunctions
     , nestedFun = \_ -> True
     , complax = \_ -> defaultTRecord
     , yoDawg = \_ -> False
+    , mapTest = M.empty
     }
 
 data TFunctions = TFunctions
@@ -40,6 +44,7 @@ data TFunctions = TFunctions
     , nestedFun  :: (String -> Int) -> Bool
     , complax    :: (Int, String) -> TRecord
     , yoDawg     :: ((Int, String, Bool) -> TRecord) -> Bool
+    , mapTest    :: M.Map DiffCrap (Int -> Bool)
     }
 
 instance ClosureDescriptable TFunctions Typeable where
@@ -50,6 +55,7 @@ instance ClosureDescriptable TFunctions Typeable where
                , "nested"  .: nestedFun
                , "complex" .: complax
                , "yodog"   .: yoDawg
+               , "mapTest" .: mapTest
                ]
     
 instance ClosureDescriptable TRecord Serializable where
@@ -58,10 +64,11 @@ instance ClosureDescriptable TRecord Serializable where
     toClosureDesc _ =
         record [ "a" .: aField
                , "b" .: bField
-               , "oki" .: dabada
+               , "oki"    .: dabada
                , "moktar" .: axx
-               , "mwep" .: bidule
-               , "ref" .: crap
+               , "mwep"   .: bidule
+               , "ref"    .: crap
+               , "assoc"  .: mapping
                ]
 
 data DiffCrap = DiffPlouch
@@ -77,11 +84,12 @@ typeDecl = do
 
 instance ClosureDescriptable DiffCrap Serializable where
     typename _ = "diffcrap"
-    toClosureDesc _ = deriveEnum undefined
-      {-enum [toEnum 0..] show assoc-}
-        {-where assoc DiffPlouch = "+"-}
-              {-assoc DiffDelche = "-"-}
-              {-assoc DiffMouelshe = "~"-}
+    toValue = defaultSerializer
+    toClosureDesc _ = -- deriveEnum undefined
+      enum [toEnum 0..] show assoc
+        where assoc DiffPlouch = "+"
+              assoc DiffDelche = "-"
+              assoc DiffMouelshe = "~"
 
 
 main :: IO ()

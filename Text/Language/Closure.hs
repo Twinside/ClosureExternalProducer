@@ -11,16 +11,25 @@
 -- I know, but I need it
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Text.Language.Closure( 
-                              defaultSerializer
-                            , declare
+                            -- * Closure type declarations
+                              declare
+                            , renderClosureEnvironment
+
+                            , defaultSerializer
+
+                            -- * Record declaration
+                            , Accessor
                             , record
+                            , (.:)
+
+                            -- * Enum declaration
                             , enum
                             , deriveEnum
-                            , (.:)
+
+                            -- * Type definitions
                             , ClosureDescriptable( .. )
                             , ClosTypingEnvironment
                             , ClosureDescription
-                            , renderClosureEnvironment
 
                             -- * Type tokens
                             , Typeable
@@ -32,10 +41,13 @@ import Control.Monad.State( State, get, put, execState )
 import qualified Data.Set as S
 import Data.Monoid( Monoid, mappend, mconcat )
 import Data.List ( intersperse )
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as E
 import Text.Printf( printf )
-{-import Data.Map  ( Map() )-}
-import Data.Aeson( ToJSON(..), Value, (.=), object )
+import qualified Data.Map as M
+import Data.Aeson( ToJSON(..), Value, (.=), object, encode )
 
 --------------------------------------------------
 ----            Typing environment
@@ -58,11 +70,15 @@ emptyEnvironment = ClosureEnvironment
     , declarationList = []
     }
 
+-- | Typing environment used to declare all the closure
+-- types which will be printed in an extern files.
 type ClosTypingEnvironment a = State ClosureEnvironment a
 
+-- | Tell if we already have rendered a type.
 isTypeRendered :: String -> ClosTypingEnvironment Bool
 isTypeRendered name = S.member name . definitions <$> get
 
+-- | Function used to declare a typedef in the typing environment.
 declare :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment ()
 declare element = do
     rendered <- renderDeclaration element
@@ -71,6 +87,9 @@ declare element = do
         definitions = S.insert (typename element) $ definitions ctxt,
         declarationList = declarationList ctxt ++ [rendered]
     }
+
+valToString :: Value -> String
+valToString = T.unpack . E.decodeUtf8 . B.concat . LB.toChunks . encode 
 
 renderDeclaration :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment String
 renderDeclaration el = do
@@ -82,7 +101,7 @@ renderDeclaration el = do
             where content = concat $ intersperse ",\n"
                         ["   " ++ render e ++ ": " ++ enumVal
                                     | e <- elems
-                                    , let enumVal  = show . toValue $ toContent e]
+                                    , let enumVal  = valToString . toValue $ toContent e]
 
       _ -> return $  printf "/** @typedef (%s) */\nvar %s;\n\n" t name
 
@@ -94,17 +113,32 @@ renderClosureEnvironment declarations =
 ----          Main  Typeclass
 --------------------------------------------------
 
+-- | Typeclass permitting accessing the type description
+-- of a type and some serialization if kind is Serializable
+-- Only two kind of declaration are allowed :
+--
+-- @
+--      instance ClosureDescriptable a Serializable
+--      instance ClosureDescriptable a Typeable
+-- @
+--
 class ClosureDescriptable a kind | a -> kind where
     -- | Name of the type, used to locate it.
     typename :: a -> String
 
+    -- | Extract the type description of type.
     toClosureDesc :: a -> ClosureDescription a kind
 
+    -- | Synonym to the toJSON function.
     toValue :: a -> Value
+    toValue = undefined
 
 --------------------------------------------------
 ----            Types
 --------------------------------------------------
+
+-- | Accessor for a record element, The only way to create Accessor
+-- is through the `.:` operator.
 data Accessor a kind where
      Accessor :: (ClosureDescriptable b kind) => String -> (a -> b) -> Accessor a kind
 
@@ -177,8 +211,19 @@ data ClosureDescription a kind where
    ClosureTupleSub  :: ClosureDescription b kind1
                     -> ClosureDescription c kind2
                     -> ClosureDescription a Typeable
+   
+   ClosureAssoc :: String
+                -> ClosureDescription c kind
+                -> ClosureDescription a kind
+
+   ClosureObject    :: String
+                    -> ClosureDescription b k1
+                    -> ClosureDescription c k2
+                    -> ClosureDescription a Typeable
 
 descriptionName :: ClosureDescription a k -> String
+descriptionName (ClosureAssoc n _) = n
+descriptionName (ClosureObject n _ _) = n
 descriptionName (ClosureEnum  n _ _ _) = n
 descriptionName (ClosureRecord n _) = n
 descriptionName (ClosureType n) = n
@@ -209,6 +254,12 @@ renderType element = do
          aux ClosureNil      = pure ""
          aux (ClosureType s) = pure s
          aux (ClosureVal s) = pure s
+         aux (ClosureObject _ key el) =
+             printf "Object.<%s, %s>" <$> renderSub key <*> renderSub el
+
+         aux (ClosureAssoc _ el) =
+             printf "Object.<string, %s>" <$> renderSub el
+
          aux (ClosureTuple l r) = sepIt <$> renderSub l <*> renderSub r
             where sepIt a "" = a
                   sepIt a b  = "(" ++ a ++ ", " ++ b ++ ")"
@@ -268,7 +319,8 @@ defaultSerializer v = serialize (toClosureDesc v) v
 serialize :: (ClosureDescriptable a Serializable)
           => ClosureDescription a Serializable -> a -> Value
 serialize (ClosureVal _) v = toValue v
-serialize (ClosureEnum _ _ renderer _) v = toJSON $ renderer v
+serialize (ClosureAssoc _ _) v = toValue v
+serialize (ClosureEnum _ _ _ (EnumContent f)) v = toValue $ f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
     where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
@@ -281,7 +333,7 @@ enum l f = ClosureEnum name l f . EnumContent
 
 deriveEnum :: (Show a, Enum a, ClosureDescriptable a k)
            => a -> ClosureDescription a Serializable
-deriveEnum v = ClosureEnum name elemList show (EnumContent (show . fromEnum))
+deriveEnum v = ClosureEnum name elemList show (EnumContent fromEnum)
     where elemList = [toEnum 0 ..]
           name = typename v
 
@@ -343,9 +395,19 @@ instance ( ClosureDescriptable a k1
         where a = undefined :: a
               b = f a :: b
 
-{-instance (ClosureDescriptable a) => ClosureDescriptable (Map String a) where-}
-    {-typename _ = "Object"-}
-    {-toClosureDesc _ = "Object.<string, " ++ sub ++ ">"-}
-        {-where sub = toClosureDesc (undefined :: a)-}
+instance ( ClosureDescriptable elem Serializable )
+        => ClosureDescriptable (M.Map String elem) Serializable where
+    typename _ = "Object"
+    toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
+    toValue v = object [T.pack k .= toValue e | (k, e) <- M.assocs v]
 
+instance ( ClosureDescriptable key k1
+         , ClosureDescriptable elem k2
+         , kind ~ Typeable
+         )
+        => ClosureDescriptable (M.Map key elem) kind where
+    typename _ = "Object"
+    toClosureDesc _ = ClosureObject "" keyType elemType
+        where keyType = toClosureDesc (undefined :: key)
+              elemType = toClosureDesc (undefined :: elem)
 
