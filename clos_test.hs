@@ -69,7 +69,7 @@ data DiffCrap = DiffPlouch
               | DiffMouelshe
               deriving (Enum, Show)
 
-typeDecl :: Clos ()
+typeDecl :: ClosTypingEnvironment ()
 typeDecl = do
     declare (undefined :: DiffCrap)
     declare (undefined :: TRecord)

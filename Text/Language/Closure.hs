@@ -1,6 +1,5 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE ScopedTypeVariables #-}
--- {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverlappingInstances #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
@@ -8,18 +7,25 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE UndecidableInstances #-}
-module Text.Language.Closure{-  
-                            ( 
-                              (.:)
-                            , Clos
+{-# LANGUAGE EmptyDataDecls #-}
+-- I know, but I need it
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+module Text.Language.Closure( 
+                              defaultSerializer
                             , declare
                             , record
                             , enum
                             , deriveEnum
-                            , ClosureDescription
+                            , (.:)
                             , ClosureDescriptable( .. )
+                            , ClosTypingEnvironment
+                            , ClosureDescription
                             , renderClosureEnvironment
-                            ) -}where
+
+                            -- * Type tokens
+                            , Typeable
+                            , Serializable
+                            ) where
 
 import Control.Applicative( (<$>), (<*>), pure )
 import Control.Monad.State( State, get, put, execState )
@@ -34,23 +40,30 @@ import Data.Aeson( ToJSON(..), Value, (.=), object )
 --------------------------------------------------
 ----            Typing environment
 --------------------------------------------------
+
+-- | Typing environment, keep track of already declared
+-- data types and their rendered representations
 data ClosureEnvironment = ClosureEnvironment 
-    { definitions       :: S.Set String
+    { -- | Already defined data types
+      definitions       :: S.Set String
+
+      -- | Rendered type declaration.
     , declarationList   :: [String]
     }
 
+-- | Default initial environment : everything is empty
 emptyEnvironment :: ClosureEnvironment
 emptyEnvironment = ClosureEnvironment
     { definitions = S.empty
     , declarationList = []
     }
 
-type Clos a = State ClosureEnvironment a
+type ClosTypingEnvironment a = State ClosureEnvironment a
 
-isTypeRendered :: String -> Clos Bool
+isTypeRendered :: String -> ClosTypingEnvironment Bool
 isTypeRendered name = S.member name . definitions <$> get
 
-declare :: (ClosureDescriptable a kind) => a -> Clos ()
+declare :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment ()
 declare element = do
     rendered <- renderDeclaration element
     ctxt <- get
@@ -59,16 +72,21 @@ declare element = do
         declarationList = declarationList ctxt ++ [rendered]
     }
 
-renderDeclaration :: (ClosureDescriptable a kind) => a -> Clos String
+renderDeclaration :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment String
 renderDeclaration el = do
     t <- renderType el
     let name = typename el
     case toClosureDesc el of
-      (ClosureEnum _ _ _ _) ->
-            return $ printf "/** @enum {%s} */\nvar %s;\n\n" t name
+      (ClosureEnum _ elems render (EnumContent toContent)) ->
+         return $ printf "/** @enum {%s} */\nvar %s = {\n%s\n};\n\n" t name content
+            where content = concat $ intersperse ",\n"
+                        ["   " ++ render e ++ ": " ++ enumVal
+                                    | e <- elems
+                                    , let enumVal  = show . toValue $ toContent e]
+
       _ -> return $  printf "/** @typedef (%s) */\nvar %s;\n\n" t name
 
-renderClosureEnvironment :: Clos () -> String
+renderClosureEnvironment :: ClosTypingEnvironment () -> String
 renderClosureEnvironment declarations =
     concat . declarationList $ execState declarations emptyEnvironment
 
@@ -171,14 +189,14 @@ descriptionName ClosureNil = ""
 descriptionName (ClosureTuple _ _) = ""
 descriptionName (ClosureTupleSub _ _) = ""
 
-renderType :: (ClosureDescriptable a kind) => a -> Clos String
+renderType :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment String
 renderType element = do
   alreadyRendered <- isTypeRendered $ typename element
   if alreadyRendered
     then pure $ typename element
     else aux $ toClosureDesc element
 
-   where renderSub :: ClosureDescription e k -> Clos String
+   where renderSub :: ClosureDescription e k -> ClosTypingEnvironment String
          renderSub def = do
             let name = descriptionName def
             alreadyRendered <- isTypeRendered name
@@ -187,7 +205,7 @@ renderType element = do
                 else aux def
 
 
-         aux :: forall a kind . ClosureDescription a kind -> Clos String
+         aux :: forall a kind . ClosureDescription a kind -> ClosTypingEnvironment String
          aux ClosureNil      = pure ""
          aux (ClosureType s) = pure s
          aux (ClosureVal s) = pure s
@@ -205,12 +223,12 @@ renderType element = do
          aux (ClosureArray _ t) =
              surround "Array.<" ">" <$> renderSub t
 
-         aux (ClosureEnum name _lst _f (EnumContent renderer)) =
+         aux (ClosureEnum _name _lst _f (EnumContent renderer)) =
              renderType (renderer undefined)
 
          aux (ClosureRecord _ lst) =
              surround "{ " " }" . commaSep <$> sequence (mapList subber lst)
-                where subber :: (Accessor a aKind) -> Clos String
+                where subber :: (Accessor a aKind) -> ClosTypingEnvironment String
                       subber (Accessor s f) = printf "%s: %s" s
                                            <$> renderSub t
                         where e = f (undefined :: a)
@@ -302,9 +320,8 @@ instance ( ClosureDescriptable a k1
          ClosureDescriptable (a,b) Typeable where
     typename _ = "tuple"
     toValue = error "Error tuples cannot be serialized"
-    toClosureDesc tu = ClosureTuple d1 d2
-        where d1 = toClosureDesc $ fst tu
-              d2 = toClosureDesc $ snd tu
+    toClosureDesc ~(d1, d2) =
+        ClosureTuple (toClosureDesc d1) (toClosureDesc d2)
 
 instance ( ClosureDescriptable a k1
          , ClosureDescriptable b k2
@@ -312,12 +329,10 @@ instance ( ClosureDescriptable a k1
          ClosureDescriptable (a, b, c) Typeable where
     typename _ = "tuple"
     toValue = error "Error tuples cannot be serialized"
-    -- Don't pattern match, argument can be undefined
-    toClosureDesc tu =
-        ClosureTuple (n1 tu) $ ClosureTupleSub (n2 tu) (n3 tu)
-            where n1 ~(a, _, _) = toClosureDesc a
-                  n2 ~(_, a, _) = toClosureDesc a
-                  n3 ~(_, _, a) = toClosureDesc a
+    toClosureDesc ~(a, b, c) =
+        ClosureTuple (toClosureDesc a)
+                   $ ClosureTupleSub (toClosureDesc b)
+                                     (toClosureDesc c)
 
 instance ( ClosureDescriptable a k1
          , ClosureDescriptable b k2) =>
