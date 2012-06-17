@@ -1,0 +1,38 @@
+-- http://www.haskell.org/cabal/release/cabal-latest/doc/users-guide/authors.html#pkg-descr.
+Cabal-version:       >=1.2
+Name:                ClosureExternalProducer
+Version:             0.1
+Synopsis:            Haskell module to help writing closure compiler type definition, from one type definition, provide export and ToJSON instance 
+-- Description:         
+Homepage:            https://github.com/Twinside/ClosureExternalProducer
+License:             BSD3
+License-file:        LICENSE
+Author:              Vincent Berthoux
+Maintainer:          vincent.berthoux@gmail.com
+Category:            Text
+Build-type:          Simple
+
+Source-Repository head
+    Type:      git
+    Location:  git://github.com/Twinside/ClosureExternalProducer.git
+
+Source-Repository this
+    Type:      git
+    Location:  git://github.com/Twinside/ClosureExternalProducer.git
+    Tag:       v0.1
+
+-- A copyright notice.
+-- Copyright:           
+
+Library
+  Ghc-options: -O2 -Wall
+  Exposed-modules:     Text.Language.Closure
+  Build-depends: base       >= 4    && < 5
+               , aeson      >= 0.6  && < 0.7
+               , text       >= 0.11 && < 0.12
+               , containers >= 0.4  && < 0.5
+               , mtl        >= 2.0  && < 2.1
+  
+  -- Modules not exported by this package.
+  -- Other-modules:       
+  
