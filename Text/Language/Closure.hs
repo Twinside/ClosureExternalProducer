@@ -10,6 +10,27 @@
 {-# LANGUAGE EmptyDataDecls #-}
 -- I know, but I need it
 {-# OPTIONS_GHC -fno-warn-orphans #-}
+-- | Automatically generate Google closure extern file
+--
+-- How to create an extern :
+--
+--  * create ClosureDescriptable instance for all your types
+--
+--  * Create a typing environment
+--
+--  * Render the typing environment
+--
+-- here is a little example for the typing environment creation
+-- and rendering
+--
+-- @
+-- closureDeclarations :: String
+-- closureDeclarations = renderClosureEnvironment $ do
+--      declare (undefined :: AnEnum)
+--      declare (undefined :: DiffType)
+--      declare (undefined :: RecordTest)
+-- @
+--
 module Text.Language.Closure( 
                             -- * Closure type declarations
                               declare
@@ -17,12 +38,12 @@ module Text.Language.Closure(
 
                             , defaultSerializer
 
-                            -- * Record declaration
+                            -- ** Record declaration
                             , Accessor
                             , record
                             , (.:)
 
-                            -- * Enum declaration
+                            -- ** Enum declaration
                             , enum
                             , deriveEnum
 
@@ -91,6 +112,7 @@ declare element = do
 valToString :: Value -> String
 valToString = T.unpack . E.decodeUtf8 . B.concat . LB.toChunks . encode 
 
+-- | Render a type declaration, in a closure like fashion.
 renderDeclaration :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment String
 renderDeclaration el = do
     t <- renderType el
@@ -105,6 +127,7 @@ renderDeclaration el = do
 
       _ -> return $  printf "/** @typedef (%s) */\nvar %s;\n\n" t name
 
+-- | Render a typing environment to a Google Closure declaration.
 renderClosureEnvironment :: ClosTypingEnvironment () -> String
 renderClosureEnvironment declarations =
     concat . declarationList $ execState declarations emptyEnvironment
@@ -118,8 +141,8 @@ renderClosureEnvironment declarations =
 -- Only two kind of declaration are allowed :
 --
 -- @
---      instance ClosureDescriptable a Serializable
---      instance ClosureDescriptable a Typeable
+-- instance ClosureDescriptable a Serializable
+-- instance ClosureDescriptable a Typeable
 -- @
 --
 class ClosureDescriptable a kind | a -> kind where
@@ -182,6 +205,12 @@ mapSerialazable :: (a Serializable -> b) -> ClosureDescList a Serializable
 mapSerialazable _ Nil = []
 mapSerialazable f (ConsSer x xs) = f x : mapSerialazable f xs
 
+-- | Represent the google closure type langage.
+-- The first type parameter represent the Haskell type
+-- being described, and the second one represent one
+-- of the type token `Typeable` or `Serializable` indicating
+-- if we can serialize the description or just output a
+-- type representation.
 data ClosureDescription a kind where
    ClosureEnum      :: String -> [a] -> (a -> String) -> EnumContent a Serializable
                     -> ClosureDescription a Serializable
@@ -289,15 +318,41 @@ renderType element = do
 --------------------------------------------------
 ----            User chrome
 --------------------------------------------------
-    --
+
+-- | This function should be used in an instance declaration
+-- to declare a google closure record.
+--
+-- Here a little use example
+--
+-- @
+-- data RecordTest = RecordTest
+--      { aField    :: String
+--      , otherFild :: Int
+--      , aList     :: [Int]
+--      }
+--
+-- instance ClosureDescriptable RecordTest Serializable where
+--    typename _ = \"recordtest\"
+--    toValue = defaultSerializer
+--    toClosureDesc _ =
+--          record [ \"aField\"        .: aField
+--                 , \"anotherField\"  .: anotherField
+--                 , \"aListOfNumber\" .: aList
+--                 ]
+-- @
+--
 record :: forall a kind.
           (ClosureDescriptable a kind,
-           DescImportable (Accessor a) kind) => [Accessor a kind]
-       -> ClosureDescription a kind
+           DescImportable (Accessor a) kind)
+       => [Accessor a kind]             -- ^ List of accessor, created via `.:`
+       -> ClosureDescription a kind     -- ^ Record description
 record = ClosureRecord name . toKind
     where name = typename (undefined :: a)
 
-(.:) :: (ClosureDescriptable b kind) => String -> (a -> b)
+-- | Create a record accessor, see `record`
+(.:) :: (ClosureDescriptable b kind)
+     => String      -- ^ Record entry name
+     -> (a -> b)    -- ^ Function used to access the element.
      -> Accessor a kind
 (.:) = Accessor
 
@@ -313,6 +368,7 @@ surround prev after v = prev `mappend` v `mappend` after
 instance (ClosureDescriptable a Serializable) => ToJSON a where
     toJSON a = serialize (toClosureDesc a) a
 
+-- | Default implementation to use for the `toValue` method.
 defaultSerializer :: (ClosureDescriptable a Serializable) => a -> Value
 defaultSerializer v = serialize (toClosureDesc v) v
 
@@ -325,14 +381,56 @@ serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
     where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
 
+-- | Create a custom Closure enum.
+-- 
+-- Usage example :
+--
+-- @
+--  data DiffType = DiffAdd
+--                | DiffDel
+--                | DiffSame
+--                deriving (Eq, Show)
+--
+--  instance ClosureDescriptable DiffType Serializable where
+--     typename _ = \"difftype\"
+--     toValue = defaultSerializer
+--     toClosureDesc _ = enum [toEnum 0 ..] show assoc
+--        where assoc DiffAdd = \"+\"
+--              assoc DiffDel = \"-\"
+--              assoc DiffSame = \"=\"
+-- @
+--
 enum :: (ClosureDescriptable a k,
          ClosureDescriptable b Serializable)
-     => [a] -> (a -> String) -> (a -> b) -> ClosureDescription a Serializable
+     => [a]             -- ^ List of all the elements present in the enumaration
+     -> (a -> String)   -- ^ A function used to name the elements of the enumeration
+     -> (a -> b)        -- ^ A function used to convert an enum element to its serialized representation
+     -> ClosureDescription a Serializable
 enum l f = ClosureEnum name l f . EnumContent 
     where name = typename (head l)
 
+-- | Helper function used to declare an enumeration inside
+-- the closure typing environment.
+--
+-- Here is a little use example :
+--
+-- @
+--  data AnEnum = AnEnumElem
+--              | AnEnumOtherElem
+--              | AnEnumSomething
+--              | AnEnumElse
+--              | AnEnumFinally
+--              deriving (Eq, Enum, Show)
+--
+--  instance ClosureDescriptable AnEnum Serializable where
+--      typename _ = \"anenum\"
+--      toValue = defaultSerializer
+--      toClosureDesc _ = deriveEnum undefined
+-- @
+--
 deriveEnum :: (Show a, Enum a, ClosureDescriptable a k)
-           => a -> ClosureDescription a Serializable
+           => a         -- ^ a Dummy value of the type, unused
+           -> ClosureDescription a Serializable
 deriveEnum v = ClosureEnum name elemList show (EnumContent fromEnum)
     where elemList = [toEnum 0 ..]
           name = typename v

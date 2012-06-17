@@ -2,8 +2,11 @@
 Cabal-version:       >=1.2
 Name:                ClosureExternalProducer
 Version:             0.1
-Synopsis:            Haskell module to help writing closure compiler type definition, from one type definition, provide export and ToJSON instance 
--- Description:         
+Synopsis:            Automatically produce Google Closure compiler extern files
+Description:         
+    Haskell module to help writing closure compiler type definition,
+    from one type definition, provide export and ToJSON instance 
+
 Homepage:            https://github.com/Twinside/ClosureExternalProducer
 License:             BSD3
 License-file:        LICENSE
