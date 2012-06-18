@@ -17,6 +17,7 @@ data TRecord = TRecord
     , bidule :: [[Bool]]
     , crap :: [DiffCrap]
     , mapping :: M.Map String Int
+    , floating :: Double
     }
 
 defaultTRecord :: TRecord
@@ -28,6 +29,7 @@ defaultTRecord = TRecord
     , bidule = [[False,True], [True, False], [False] ]
     , crap = [DiffMouelshe, DiffPlouch]
     , mapping = M.fromList [("yeah", 16), ("ouki", 19)]
+    , floating = pi
     }
 
 defaultTFunctions :: TFunctions
@@ -37,6 +39,7 @@ defaultTFunctions = TFunctions
     , complax = \_ -> defaultTRecord
     , yoDawg = \_ -> False
     , mapTest = M.empty
+    , listo = []
     }
 
 data TFunctions = TFunctions
@@ -45,22 +48,23 @@ data TFunctions = TFunctions
     , complax    :: (Int, String) -> TRecord
     , yoDawg     :: ((Int, String, Bool) -> TRecord) -> Bool
     , mapTest    :: M.Map DiffCrap (Int -> Bool)
+    , listo      :: [Int -> String]
     }
 
 instance ClosureDescriptable TFunctions Typeable where
     typename _ = "tfunctions"
-    toValue = undefined
     toClosureDesc _ =
         record [ "simple"  .: simpleFunc
                , "nested"  .: nestedFun
                , "complex" .: complax
                , "yodog"   .: yoDawg
+               , "testo"   .: listo
                , "mapTest" .: mapTest
                ]
+
     
 instance ClosureDescriptable TRecord Serializable where
     typename _ = "trecord"
-    toValue = defaultSerializer
     toClosureDesc _ =
         record [ "a" .: aField
                , "b" .: bField
@@ -69,6 +73,7 @@ instance ClosureDescriptable TRecord Serializable where
                , "mwep"   .: bidule
                , "ref"    .: crap
                , "assoc"  .: mapping
+               , "float"  .: floating
                ]
 
 data DiffCrap = DiffPlouch
@@ -85,11 +90,11 @@ typeDecl = do
 instance ClosureDescriptable DiffCrap Serializable where
     typename _ = "diffcrap"
     toValue = defaultSerializer
-    toClosureDesc _ = -- deriveEnum undefined
-      enum [toEnum 0..] show assoc
-        where assoc DiffPlouch = "+"
-              assoc DiffDelche = "-"
-              assoc DiffMouelshe = "~"
+    toClosureDesc _ = deriveEnum undefined
+      {-enum [toEnum 0..] show assoc-}
+        {-where assoc DiffPlouch = "+"-}
+              {-assoc DiffDelche = "-"-}
+              {-assoc DiffMouelshe = "~"-}
 
 
 main :: IO ()
