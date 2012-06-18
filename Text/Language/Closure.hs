@@ -49,7 +49,7 @@ module Text.Language.Closure(
 
                             -- * Type definitions
                             , ClosureDescriptable( .. )
-                            , ClosTypingEnvironment
+                            , ClosTypingEnvironment()
                             , ClosureDescription
 
                             -- * Type tokens
@@ -62,6 +62,8 @@ import Control.Monad.State( State, get, put, execState )
 import qualified Data.Set as S
 import Data.Monoid( Monoid, mappend, mconcat )
 import Data.List ( intersperse )
+import Data.Word( Word, Word16, Word32, Word64 )
+import Data.Int( Int16, Int32, Int64 )
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text as T
@@ -154,7 +156,7 @@ class ClosureDescriptable a kind | a -> kind where
 
     -- | Synonym to the toJSON function.
     toValue :: a -> Value
-    toValue = undefined
+    toValue = error "Not defined ClosureDescriptable::toValue method"
 
 --------------------------------------------------
 ----            Types
@@ -222,6 +224,9 @@ data ClosureDescription a kind where
 
    ClosureVal       :: String -> ClosureDescription a Serializable
 
+   ClosureDowncast  :: ClosureDescription a k
+                    -> ClosureDescription a Typeable
+
    ClosureArray     :: String
                     -> ClosureDescription el kind
                     -> ClosureDescription a kind
@@ -252,6 +257,7 @@ data ClosureDescription a kind where
 
 descriptionName :: ClosureDescription a k -> String
 descriptionName (ClosureAssoc n _) = n
+descriptionName (ClosureDowncast a) = descriptionName a
 descriptionName (ClosureObject n _ _) = n
 descriptionName (ClosureEnum  n _ _ _) = n
 descriptionName (ClosureRecord n _) = n
@@ -281,6 +287,7 @@ renderType element = do
 
          aux :: forall a kind . ClosureDescription a kind -> ClosTypingEnvironment String
          aux ClosureNil      = pure ""
+         aux (ClosureDowncast a) = aux a
          aux (ClosureType s) = pure s
          aux (ClosureVal s) = pure s
          aux (ClosureObject _ key el) =
@@ -376,7 +383,8 @@ serialize :: (ClosureDescriptable a Serializable)
           => ClosureDescription a Serializable -> a -> Value
 serialize (ClosureVal _) v = toValue v
 serialize (ClosureAssoc _ _) v = toValue v
-serialize (ClosureEnum _ _ _ (EnumContent f)) v = toValue $ f v
+serialize (ClosureEnum _ _ _ (EnumContent f)) v = serialize (toClosureDesc value) value
+    where value = f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
     where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
@@ -436,9 +444,54 @@ deriveEnum v = ClosureEnum name elemList show (EnumContent fromEnum)
           name = typename v
 
 --------------------------------------------------
-----         Initial type instances
+----         "base" type instances
 --------------------------------------------------
 instance ClosureDescriptable Int Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Int16 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Int32 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Int64 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Word Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Word16 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Word32 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Word64 Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Float Serializable where
+    typename  _ = "number"
+    toClosureDesc _ = ClosureVal "number"
+    toValue = toJSON
+
+instance ClosureDescriptable Double Serializable where
     typename  _ = "number"
     toClosureDesc _ = ClosureVal "number"
     toValue = toJSON
@@ -453,18 +506,38 @@ instance ClosureDescriptable Char Serializable where
     toClosureDesc _ = ClosureVal "string"
     toValue = toJSON
 
+instance ClosureDescriptable T.Text Serializable where
+    typename _ ="string"
+    toClosureDesc _ = ClosureVal "string"
+    toValue = toJSON
+
+instance ClosureDescriptable B.ByteString Serializable where
+    typename _ ="string"
+    toClosureDesc _ = ClosureVal "string"
+    toValue = toJSON
+
+--------------------------------------------------
+----            Array/String instances
+--------------------------------------------------
 instance ClosureDescriptable String Serializable where
     typename  _ = "string"
     toClosureDesc _ = ClosureVal "string"
     toValue = toJSON
 
-instance (ClosureDescriptable a kind,
-          ToJSON a) => ClosureDescriptable [a] kind where
+instance (ClosureDescriptable a kind)
+       => ClosureDescriptable [a] kind where
     typename _ = "Array"
-    toValue = toJSON
+    -- It's, let's aknoweledge it, ugly. But the type system
+    -- ensure us that we won't be able to construct a value
+    -- not serializable.
+    toValue = toJSON . map toValue
+
     toClosureDesc _ = ClosureArray ""
                     $ toClosureDesc (undefined :: a)
 
+--------------------------------------------------
+----            "Functions" instance
+--------------------------------------------------
 instance ( ClosureDescriptable a k1
          , ClosureDescriptable b k2 ) =>
          ClosureDescriptable (a,b) Typeable where
@@ -493,11 +566,28 @@ instance ( ClosureDescriptable a k1
         where a = undefined :: a
               b = f a :: b
 
+--------------------------------------------------
+----            "Objects" instance
+--------------------------------------------------
+-- SOme overlap probelms can arrize with the Typeable constraint.
 instance ( ClosureDescriptable elem Serializable )
         => ClosureDescriptable (M.Map String elem) Serializable where
     typename _ = "Object"
     toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
     toValue v = object [T.pack k .= toValue e | (k, e) <- M.assocs v]
+
+instance ( ClosureDescriptable elem Serializable )
+        => ClosureDescriptable (M.Map T.Text elem) Serializable where
+    typename _ = "Object"
+    toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
+    toValue v = object [k .= toValue e | (k, e) <- M.assocs v]
+
+instance ( ClosureDescriptable elem Serializable )
+        => ClosureDescriptable (M.Map B.ByteString elem) Serializable where
+    typename _ = "Object"
+    toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
+    toValue v = object [conv k .= toValue e | (k, e) <- M.assocs v]
+        where conv = E.decodeUtf8
 
 instance ( ClosureDescriptable key k1
          , ClosureDescriptable elem k2
