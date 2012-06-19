@@ -524,16 +524,28 @@ instance ClosureDescriptable String Serializable where
     toClosureDesc _ = ClosureVal "string"
     toValue = toJSON
 
-instance (ClosureDescriptable a kind)
+class (ClosureDescriptable a k) => ArraySerializable a k where
+    listSerialize :: [a] -> Value
+
+instance (ClosureDescriptable a Serializable)
+         => ArraySerializable a Serializable where
+    listSerialize = toJSON . map s
+        where s a = serialize (toClosureDesc a) a
+
+instance (ClosureDescriptable a Typeable)
+         => ArraySerializable a Typeable where
+    listSerialize = error "Cannot serialize value from typeable"
+
+instance (ArraySerializable a kind, ClosureDescriptable a kind)
        => ClosureDescriptable [a] kind where
     typename _ = "Array"
     -- It's, let's aknoweledge it, ugly. But the type system
     -- ensure us that we won't be able to construct a value
     -- not serializable.
-    toValue = toJSON . map toValue
+    toValue = listSerialize
 
-    toClosureDesc _ = ClosureArray ""
-                    $ toClosureDesc (undefined :: a)
+    toClosureDesc ~(v:_) = ClosureArray "" $ toClosureDesc v
+
 
 --------------------------------------------------
 ----            "Functions" instance
