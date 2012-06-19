@@ -31,6 +31,10 @@
 --      declare (undefined :: RecordTest)
 -- @
 --
+-- A value declared as an
+-- `instance ClosureDescriptable a Serializable` can be serialized
+-- with the `toJSON` method
+--
 module Text.Language.Closure( 
                             -- * Closure type declarations
                               declare
@@ -48,7 +52,7 @@ module Text.Language.Closure(
                             , deriveEnum
 
                             -- * Type definitions
-                            , ClosureDescriptable( .. )
+                            , ClosureDescriptable( typename, toClosureDesc )
                             , ClosTypingEnvironment()
                             , ClosureDescription
 
@@ -340,7 +344,6 @@ renderType element = do
 --
 -- instance ClosureDescriptable RecordTest Serializable where
 --    typename _ = \"recordtest\"
---    toValue = defaultSerializer
 --    toClosureDesc _ =
 --          record [ \"aField\"        .: aField
 --                 , \"anotherField\"  .: anotherField
@@ -383,7 +386,8 @@ serialize :: (ClosureDescriptable a Serializable)
           => ClosureDescription a Serializable -> a -> Value
 serialize (ClosureVal _) v = toValue v
 serialize (ClosureAssoc _ _) v = toValue v
-serialize (ClosureEnum _ _ _ (EnumContent f)) v = serialize (toClosureDesc value) value
+serialize (ClosureEnum _ _ _ (EnumContent f)) v =
+  serialize (toClosureDesc value) value
     where value = f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
@@ -401,7 +405,6 @@ serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
 --
 --  instance ClosureDescriptable DiffType Serializable where
 --     typename _ = \"difftype\"
---     toValue = defaultSerializer
 --     toClosureDesc _ = enum [toEnum 0 ..] show assoc
 --        where assoc DiffAdd = \"+\"
 --              assoc DiffDel = \"-\"
@@ -432,7 +435,6 @@ enum l f = ClosureEnum name l f . EnumContent
 --
 --  instance ClosureDescriptable AnEnum Serializable where
 --      typename _ = \"anenum\"
---      toValue = defaultSerializer
 --      toClosureDesc _ = deriveEnum undefined
 -- @
 --
@@ -586,20 +588,23 @@ instance ( ClosureDescriptable elem Serializable )
         => ClosureDescriptable (M.Map String elem) Serializable where
     typename _ = "Object"
     toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
-    toValue v = object [T.pack k .= toValue e | (k, e) <- M.assocs v]
+    toValue vals = object [T.pack k .= seri e | (k, e) <- M.assocs vals]
+        where seri v = serialize (toClosureDesc v) v
 
 instance ( ClosureDescriptable elem Serializable )
         => ClosureDescriptable (M.Map T.Text elem) Serializable where
     typename _ = "Object"
     toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
-    toValue v = object [k .= toValue e | (k, e) <- M.assocs v]
+    toValue vals = object [k .= seri e | (k, e) <- M.assocs vals]
+        where seri v = serialize (toClosureDesc v) v
 
 instance ( ClosureDescriptable elem Serializable )
         => ClosureDescriptable (M.Map B.ByteString elem) Serializable where
     typename _ = "Object"
     toClosureDesc _ = ClosureAssoc "" $ toClosureDesc (undefined :: elem)
-    toValue v = object [conv k .= toValue e | (k, e) <- M.assocs v]
+    toValue vals = object [conv k .= seri e | (k, e) <- M.assocs vals]
         where conv = E.decodeUtf8
+              seri v = serialize (toClosureDesc v) v
 
 instance ( ClosureDescriptable key k1
          , ClosureDescriptable elem k2
