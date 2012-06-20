@@ -51,8 +51,14 @@ module Text.Language.Closure(
                             , enum
                             , deriveEnum
 
+                            -- ** Simple value declaration
+                            , value
+
                             -- * Type definitions
-                            , ClosureDescriptable( typename, toClosureDesc )
+                            , ClosureDescriptable( typename
+                                                 , toClosureDesc
+                                                 )
+
                             , ClosTypingEnvironment()
                             , ClosureDescription
 
@@ -131,7 +137,7 @@ renderDeclaration el = do
                                     | e <- elems
                                     , let enumVal  = valToString . toValue $ toContent e]
 
-      _ -> return $  printf "/** @typedef (%s) */\nvar %s;\n\n" t name
+      _ -> return $  printf "/** @typedef {%s} */\nvar %s;\n\n" t name
 
 -- | Render a typing environment to a Google Closure declaration.
 renderClosureEnvironment :: ClosTypingEnvironment () -> String
@@ -151,6 +157,7 @@ renderClosureEnvironment declarations =
 -- instance ClosureDescriptable a Typeable
 -- @
 --
+-- Minimum complete difinition : `typename` and `toClosureDesc`
 class ClosureDescriptable a kind | a -> kind where
     -- | Name of the type, used to locate it.
     typename :: a -> String
@@ -258,6 +265,10 @@ data ClosureDescription a kind where
                     -> ClosureDescription b k1
                     -> ClosureDescription c k2
                     -> ClosureDescription a Typeable
+   
+   ClosureTypedef   :: (ClosureDescriptable sub kind)
+                    => String -> (a -> sub)
+                    -> ClosureDescription a kind
 
 descriptionName :: ClosureDescription a k -> String
 descriptionName (ClosureAssoc n _) = n
@@ -269,6 +280,7 @@ descriptionName (ClosureType n) = n
 descriptionName (ClosureVal n) = n
 descriptionName (ClosureArray n _) = n
 descriptionName (ClosureFunction n _ _) = n
+descriptionName (ClosureTypedef n _) = n
 descriptionName ClosureNil = ""
 descriptionName (ClosureTuple _ _) = ""
 descriptionName (ClosureTupleSub _ _) = ""
@@ -293,6 +305,7 @@ renderType element = do
          aux ClosureNil      = pure ""
          aux (ClosureDowncast a) = aux a
          aux (ClosureType s) = pure s
+         aux (ClosureTypedef _ f) = renderSub . toClosureDesc $ f undefined
          aux (ClosureVal s) = pure s
          aux (ClosureObject _ key el) =
              printf "Object.<%s, %s>" <$> renderSub key <*> renderSub el
@@ -385,10 +398,12 @@ defaultSerializer v = serialize (toClosureDesc v) v
 serialize :: (ClosureDescriptable a Serializable)
           => ClosureDescription a Serializable -> a -> Value
 serialize (ClosureVal _) v = toValue v
+serialize (ClosureTypedef _ f) v = serialize (toClosureDesc sub) sub
+    where sub = f v
 serialize (ClosureAssoc _ _) v = toValue v
 serialize (ClosureEnum _ _ _ (EnumContent f)) v =
-  serialize (toClosureDesc value) value
-    where value = f v
+  serialize (toClosureDesc val) val
+    where val = f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
     where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
@@ -444,6 +459,14 @@ deriveEnum :: (Show a, Enum a, ClosureDescriptable a k)
 deriveEnum v = ClosureEnum name elemList show (EnumContent fromEnum)
     where elemList = [toEnum 0 ..]
           name = typename v
+
+--------------------------------------------------
+----            "base" type creation
+--------------------------------------------------
+value :: forall a sub kind. 
+         (ClosureDescriptable a kind, ClosureDescriptable sub kind)
+      => (a -> sub) -> ClosureDescription a kind
+value = ClosureTypedef $ typename (undefined :: a)
 
 --------------------------------------------------
 ----         "base" type instances
@@ -518,6 +541,11 @@ instance ClosureDescriptable B.ByteString Serializable where
     toClosureDesc _ = ClosureVal "string"
     toValue = toJSON
 
+instance ClosureDescriptable Value Serializable where
+    typename _ = "*"
+    toValue = toJSON
+    toClosureDesc _ = ClosureVal "*"
+
 --------------------------------------------------
 ----            Array/String instances
 --------------------------------------------------
@@ -545,9 +573,7 @@ instance (ArraySerializable a kind, ClosureDescriptable a kind)
     -- ensure us that we won't be able to construct a value
     -- not serializable.
     toValue = listSerialize
-
     toClosureDesc ~(v:_) = ClosureArray "" $ toClosureDesc v
-
 
 --------------------------------------------------
 ----            "Functions" instance
@@ -570,6 +596,19 @@ instance ( ClosureDescriptable a k1
         ClosureTuple (toClosureDesc a)
                    $ ClosureTupleSub (toClosureDesc b)
                                      (toClosureDesc c)
+
+instance ( ClosureDescriptable a k1
+         , ClosureDescriptable b k2
+         , ClosureDescriptable c k3
+         , ClosureDescriptable d k4) =>
+         ClosureDescriptable (a, b, c, d) Typeable where
+    typename _ = "tuple"
+    toValue = error "Error tuples cannot be serialized"
+    toClosureDesc ~(a, b, c, d) =
+        ClosureTuple (ClosureTupleSub (toClosureDesc a)
+                                      (toClosureDesc b))
+                   $ ClosureTupleSub (toClosureDesc c)
+                                     (toClosureDesc d)
 
 instance ( ClosureDescriptable a k1
          , ClosureDescriptable b k2) =>

@@ -51,6 +51,12 @@ data TFunctions = TFunctions
     , listo      :: [Int -> String]
     }
 
+newtype Bidule = Bidule String
+
+instance ClosureDescriptable Bidule Serializable where
+    typename _ = "Bidule"
+    toClosureDesc _ = value (\(Bidule a) -> a)
+
 instance ClosureDescriptable TFunctions Typeable where
     typename _ = "tfunctions"
     toClosureDesc _ =
@@ -86,10 +92,10 @@ typeDecl = do
     declare (undefined :: DiffCrap)
     declare (undefined :: TRecord)
     declare (undefined :: TFunctions)
+    declare (undefined :: Bidule)
 
 instance ClosureDescriptable DiffCrap Serializable where
     typename _ = "diffcrap"
-    toValue = defaultSerializer
     toClosureDesc _ = deriveEnum undefined
       {-enum [toEnum 0..] show assoc-}
         {-where assoc DiffPlouch = "+"-}
@@ -103,6 +109,6 @@ main = do
     putStrLn . T.unpack . E.decodeUtf8  . B.concat . BL.toChunks . encode
              $ toJSON defaultTRecord
 
-    {-putStrLn . T.unpack . E.decodeUtf8  . B.concat . BL.toChunks . encode-}
-             {-$ toJSON defaultTFunctions-}
+    putStrLn . T.unpack . E.decodeUtf8  . B.concat . BL.toChunks . encode
+             $ toJSON (Bidule "wepTest")
 

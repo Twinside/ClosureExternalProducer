@@ -4,8 +4,11 @@ PACK_FOLDER:=ClosureExternalProducer-$(CEP_VERSION)
 test:
 	runhaskell -Wall clos_test.hs
 
-all:
+build:
 	runhaskell Setup.hs build
+
+install:
+	runhaskell Setup.hs install
 
 conf:
 	runhaskell Setup.hs configure
