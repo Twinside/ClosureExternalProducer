@@ -78,6 +78,7 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as LB
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
+import qualified Data.Vector as V
 import Text.Printf( printf )
 import qualified Data.Map as M
 import Data.Aeson( ToJSON(..), Value, (.=), object, encode )
@@ -135,7 +136,7 @@ renderDeclaration el = do
             where content = concat $ intersperse ",\n"
                         ["   " ++ render e ++ ": " ++ enumVal
                                     | e <- elems
-                                    , let enumVal  = valToString . toValue $ toContent e]
+                                    , let enumVal  = valToString . defaultSerializer $ toContent e]
 
       _ -> return $  printf "/** @typedef {%s} */\nvar %s;\n\n" t name
 
@@ -398,15 +399,12 @@ defaultSerializer v = serialize (toClosureDesc v) v
 serialize :: (ClosureDescriptable a Serializable)
           => ClosureDescription a Serializable -> a -> Value
 serialize (ClosureVal _) v = toValue v
-serialize (ClosureTypedef _ f) v = serialize (toClosureDesc sub) sub
-    where sub = f v
+serialize (ClosureTypedef _ f) v = defaultSerializer $ f v
 serialize (ClosureAssoc _ _) v = toValue v
-serialize (ClosureEnum _ _ _ (EnumContent f)) v =
-  serialize (toClosureDesc val) val
-    where val = f v
+serialize (ClosureEnum _ _ _ (EnumContent f)) v = defaultSerializer $ f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
-    where toVal (Accessor n f) = (T.pack n) .= toValue (f v)
+    where toVal (Accessor n f) = (T.pack n) .= defaultSerializer (f v)
 
 -- | Create a custom Closure enum.
 -- 
@@ -574,6 +572,16 @@ instance (ArraySerializable a kind, ClosureDescriptable a kind)
     -- not serializable.
     toValue = listSerialize
     toClosureDesc ~(v:_) = ClosureArray "" $ toClosureDesc v
+
+--------------------------------------------------
+----            Vector instances
+--------------------------------------------------
+instance (ClosureDescriptable a kind, ArraySerializable a kind)
+		=> ClosureDescriptable (V.Vector a) kind where
+	typename _ = "Array"
+	toValue = listSerialize . V.toList
+	toClosureDesc _ = ClosureArray "" $ toClosureDesc (undefined :: a)
+
 
 --------------------------------------------------
 ----            "Functions" instance
