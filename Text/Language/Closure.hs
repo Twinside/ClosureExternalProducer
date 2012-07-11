@@ -423,7 +423,7 @@ serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
 --
 --  instance ClosureDescriptable DiffType Serializable where
 --     typename _ = \"difftype\"
---     toClosureDesc _ = enum [toEnum 0 ..] show assoc
+--     toClosureDesc _ = enum [DiffAdd, DiffDel, DiffSame] show assoc
 --        where assoc DiffAdd = \"+\"
 --              assoc DiffDel = \"-\"
 --              assoc DiffSame = \"=\"
