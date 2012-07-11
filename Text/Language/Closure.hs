@@ -112,15 +112,17 @@ type ClosTypingEnvironment a = State ClosureEnvironment a
 isTypeRendered :: String -> ClosTypingEnvironment Bool
 isTypeRendered name = S.member name . definitions <$> get
 
+registerType :: String -> ClosTypingEnvironment ()
+registerType name = do
+    ctxt <- get
+    put $ ctxt { definitions = S.insert (name) $ definitions ctxt }
+
 -- | Function used to declare a typedef in the typing environment.
 declare :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment ()
 declare element = do
     rendered <- renderDeclaration element
     ctxt <- get
-    put $ ctxt {
-        definitions = S.insert (typename element) $ definitions ctxt,
-        declarationList = declarationList ctxt ++ [rendered]
-    }
+    put $ ctxt { declarationList = declarationList ctxt ++ [rendered] }
 
 valToString :: Value -> String
 valToString = T.unpack . E.decodeUtf8 . B.concat . LB.toChunks . encode 
@@ -291,7 +293,10 @@ renderType element = do
   alreadyRendered <- isTypeRendered $ typename element
   if alreadyRendered
     then pure $ typename element
-    else aux $ toClosureDesc element
+    else do
+        -- we register type early to let us handle recursive types
+        registerType $ typename element
+        aux $ toClosureDesc element
 
    where renderSub :: ClosureDescription e k -> ClosTypingEnvironment String
          renderSub def = do

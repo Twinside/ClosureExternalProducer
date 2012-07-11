@@ -87,12 +87,25 @@ data DiffCrap = DiffPlouch
               | DiffMouelshe
               deriving (Enum, Show)
 
+data RecursiveType = RecursiveType
+    { recursInt :: Int
+    , recursLst :: [RecursiveType]
+    }
+
+instance ClosureDescriptable RecursiveType Serializable where
+    typename _ = "RecursiveType"
+    toClosureDesc _ = record
+        [ "int" .: recursInt
+        , "lst" .: recursLst
+        ]
+
 typeDecl :: ClosTypingEnvironment ()
 typeDecl = do
     declare (undefined :: DiffCrap)
     declare (undefined :: TRecord)
     declare (undefined :: TFunctions)
     declare (undefined :: Bidule)
+    declare (undefined :: RecursiveType)
 
 instance ClosureDescriptable DiffCrap Serializable where
     typename _ = "diffcrap"
