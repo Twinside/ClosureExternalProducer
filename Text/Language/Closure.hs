@@ -70,8 +70,8 @@ module Text.Language.Closure(
 import Control.Applicative( (<$>), (<*>), pure )
 import Control.Monad.State( State, get, put, execState )
 import qualified Data.Set as S
-import Data.Monoid( Monoid, mappend, mconcat )
-import Data.List ( intersperse )
+import Data.Monoid( Monoid, mappend )
+import Data.List ( intercalate )
 import Data.Word( Word, Word16, Word32, Word64 )
 import Data.Int( Int16, Int32, Int64 )
 import qualified Data.ByteString as B
@@ -115,7 +115,7 @@ isTypeRendered name = S.member name . definitions <$> get
 registerType :: String -> ClosTypingEnvironment ()
 registerType name = do
     ctxt <- get
-    put $ ctxt { definitions = S.insert (name) $ definitions ctxt }
+    put $ ctxt { definitions = S.insert name $ definitions ctxt }
 
 -- | Function used to declare a typedef in the typing environment.
 declare :: (ClosureDescriptable a kind) => a -> ClosTypingEnvironment ()
@@ -135,7 +135,7 @@ renderDeclaration el = do
     case toClosureDesc el of
       (ClosureEnum _ elems render (EnumContent toContent)) ->
          return $ printf "/** @enum {%s} */\nvar %s = {\n%s\n};\n\n" t name content
-            where content = concat $ intersperse ",\n"
+            where content = intercalate ",\n"
                         ["   " ++ render e ++ ": " ++ enumVal
                                     | e <- elems
                                     , let enumVal  = valToString . defaultSerializer $ toContent e]
@@ -204,12 +204,10 @@ class DescImportable a kind where
     toKind :: [a kind] -> ClosureDescList a kind
 
 instance DescImportable a Typeable where
-    toKind [] = Nil
-    toKind (x:xs) = Cons x $ toKind xs
+    toKind = foldr Cons Nil
 
 instance DescImportable a Serializable where
-    toKind [] = Nil
-    toKind (x:xs) = ConsSer x $ toKind xs
+    toKind  = foldr ConsSer Nil
 
 mapList :: (forall subKind. a subKind -> b) -> ClosureDescList a kind -> [b]
 mapList _ Nil = []
@@ -338,7 +336,7 @@ renderType element = do
 
          aux (ClosureRecord _ lst) =
              surround "{ " " }" . commaSep <$> sequence (mapList subber lst)
-                where subber :: (Accessor a aKind) -> ClosTypingEnvironment String
+                where subber :: Accessor a aKind -> ClosTypingEnvironment String
                       subber (Accessor s f) = printf "%s: %s" s
                                            <$> renderSub t
                         where e = f (undefined :: a)
@@ -386,7 +384,7 @@ record = ClosureRecord name . toKind
 (.:) = Accessor
 
 commaSep :: [String] -> String
-commaSep = mconcat . intersperse ",\n                "
+commaSep = intercalate ",\n                "
 
 surround :: (Monoid a) => a -> a -> a -> a
 surround prev after v = prev `mappend` v `mappend` after
@@ -409,7 +407,7 @@ serialize (ClosureAssoc _ _) v = toValue v
 serialize (ClosureEnum _ _ _ (EnumContent f)) v = defaultSerializer $ f v
 serialize (ClosureArray _ _)  arr = toValue arr
 serialize (ClosureRecord _ lst) v = object $ mapSerialazable toVal lst
-    where toVal (Accessor n f) = (T.pack n) .= defaultSerializer (f v)
+    where toVal (Accessor n f) = T.pack n .= defaultSerializer (f v)
 
 -- | Create a custom Closure enum.
 -- 
