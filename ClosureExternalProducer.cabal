@@ -33,10 +33,10 @@ Library
   Build-depends: base       >= 4    && < 5
                , aeson      >= 0.6  && < 0.7
                , text       >= 0.11 && < 0.12
-               , containers >= 0.4  && < 0.5
-               , mtl        >= 2.0  && < 2.1
+               , containers >= 0.4  && < 0.6
+               , mtl        >= 2.0  && < 2.2
                , bytestring >= 0.9  && < 0.10
-               , vector     >= 0.9.1 && < 0.10
+               , vector     >= 0.9.1 && < 0.11
   
   -- Modules not exported by this package.
   -- Other-modules:       
