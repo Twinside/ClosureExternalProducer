@@ -35,7 +35,7 @@ Library
                , text       >= 0.11 && < 0.12
                , containers >= 0.4  && < 0.6
                , mtl        >= 2.0  && < 2.2
-               , bytestring >= 0.9  && < 0.10
+               , bytestring >= 0.9  && < 0.11
                , vector     >= 0.9.1 && < 0.11
   
   -- Modules not exported by this package.
